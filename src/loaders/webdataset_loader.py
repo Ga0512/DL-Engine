@@ -152,8 +152,42 @@ class WebDatasetDataModule(pl.LightningDataModule):
 # SegmentationDataModule
 # ---------------------------------------------------------------------------
 
+def _decode_tif(key: str, data: bytes):
+    """Decode GeoTIFF bytes → numpy array (C, H, W). Returns None for non-TIF keys."""
+    if not key.endswith((".tif", ".tiff")):
+        return None
+    import io
+    import rasterio
+    with rasterio.open(io.BytesIO(data)) as src:
+        return src.read()  # (C, H, W)
+
+
+def _pair_image_mask(src):
+    """
+    Custom WebDataset compose stage.
+
+    WebDataset groups files by stem (before first dot), so {key}.tif and
+    {key}_mask.tif land in different samples. This stage buffers them and
+    yields paired dicts: {"image": arr, "mask": arr}.
+    """
+    buffer = {}
+    for sample in src:
+        key = sample["__key__"]
+        if key.endswith("_mask"):
+            base = key[:-5]
+            if base in buffer:
+                yield {"image": buffer.pop(base), "mask": sample["tif"]}
+            else:
+                buffer[key] = sample["tif"]
+        else:
+            mask_key = key + "_mask"
+            if mask_key in buffer:
+                yield {"image": sample["tif"], "mask": buffer.pop(mask_key)}
+            else:
+                buffer[key] = sample["tif"]
+
+
 def _make_image_transform(mean: list, std: list):
-    """Per-band normalization for multi-band numpy arrays (C, H, W)."""
     mean_arr = np.array(mean, dtype=np.float32).reshape(-1, 1, 1)
     std_arr  = np.array(std,  dtype=np.float32).reshape(-1, 1, 1)
     def transform(x: np.ndarray) -> torch.Tensor:
@@ -161,22 +195,18 @@ def _make_image_transform(mean: list, std: list):
     return transform
 
 
-def _mask_transform(x) -> torch.Tensor:
-    """Convert a PIL mask image to a long tensor of class indices."""
-    return torch.from_numpy(np.array(x, dtype=np.int64))
+def _mask_tif_transform(x: np.ndarray) -> torch.Tensor:
+    arr = x[0] if x.ndim == 3 else x  # (1, H, W) → (H, W)
+    return torch.from_numpy(arr.astype(np.int64))
 
 
 class SegmentationDataModule(pl.LightningDataModule):
     """
-    DataModule for semantic segmentation.
+    DataModule for semantic segmentation from GeoTIFF shards already in S3.
 
-    Shard format expected inside each .tar:
-        {key}.npy  — numpy array (C, H, W), multi-band satellite image
-        {key}.png  — segmentation mask as grayscale PNG (pixel = class index)
-
-    To create shards from GeoTIFF crops:
-        np.save(f"{key}.npy", crop_array)   # shape (C, H, W)
-        mask_pil.save(f"{key}.png")
+    Shard format inside each .tar:
+        {key}.tif       — GeoTIFF satellite image  (C, H, W), e.g. 11 bands
+        {key}_mask.tif  — GeoTIFF segmentation mask (1, H, W), pixel = class index
 
     Band statistics (mean/std per band) must be precomputed from your dataset
     and set in the config under data.band_mean and data.band_std.
@@ -201,9 +231,9 @@ class SegmentationDataModule(pl.LightningDataModule):
                 nodesplitter=wds.split_by_node,
             )
             .shuffle(1000 if is_train else 0)
-            .decode("numpy", "pil")
-            .to_tuple("npy", "png")
-            .map_tuple(img_tf, _mask_transform)
+            .decode(_decode_tif)
+            .compose(_pair_image_mask)
+            .map(lambda s: (img_tf(s["image"]), _mask_tif_transform(s["mask"])))
             .batched(self.cfg.data.batch_size, partial=not is_train)
         )
         return dataset
