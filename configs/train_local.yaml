@@ -1,0 +1,40 @@
+# Local training config — uses tests/assets/bucket/ as a fake S3 bucket.
+# Run from the project root: python train.py configs/train_local.yaml
+
+model:
+  name: resnet18        # smaller than resnet50 — faster for local iteration
+  pretrained: false
+  num_classes: 3        # cat / dog / bird (matches make_assets.py)
+
+data:
+  train_shards: "tests/assets/bucket/train/train-{0000..0002}.tar"
+  val_shards:   "tests/assets/bucket/val/val-{0000..0000}.tar"
+  batch_size: 4
+  num_workers: 0        # 0 = single process, fine for small local dataset
+  image_size: 64
+  samples_per_epoch: 16
+
+training:
+  max_epochs: 3
+  precision: "32"       # no AMP — CPU-safe for local runs
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+
+optimizer:
+  name: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+scheduler:
+  name: cosine
+
+checkpoint:
+  dirpath: "./checkpoints/local"
+  monitor: "val/loss"
+  mode: "min"
+  save_top_k: 1
+
+wandb:
+  project: "dl-engine-local"
+  entity: null
+  tags: ["local"]

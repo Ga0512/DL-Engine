@@ -1,0 +1,37 @@
+model:
+  name: resnet50          # Any timm name: vit_base_patch16_224, convnext_base, efficientnet_b4...
+  pretrained: true
+  num_classes: 10
+
+data:
+  train_shards: "s3://my-bucket/train/train-{0000..0127}.tar"
+  val_shards: "s3://my-bucket/val/val-{0000..0015}.tar"
+  batch_size: 64
+  num_workers: 8          # Rule of thumb: 2x num GPU cores, max ~16
+  image_size: 224
+  samples_per_epoch: 1_000_000   # Controls epoch length for infinite streaming
+
+training:
+  max_epochs: 50
+  precision: "16-mixed"   # Use "bf16-mixed" on A100/H100 — faster and more stable
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+
+optimizer:
+  name: adamw             # "adamw" or "sgd"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+scheduler:
+  name: cosine            # "cosine" or "onecycle"
+
+checkpoint:
+  dirpath: "./checkpoints"
+  monitor: "val/loss"
+  mode: "min"
+  save_top_k: 3
+
+wandb:
+  project: "dl-engine"
+  entity: null            # Set to your W&B username or team
+  tags: []
