@@ -1,0 +1,16 @@
+# LLM fine-tuning dependencies — install in addition to requirements.txt
+#
+# Unsloth requires a specific torch + CUDA combination.
+# Follow the official install guide for your GPU:
+#   https://github.com/unslothai/unsloth
+#
+# Typical install on RunPod (CUDA 12.1, torch 2.2):
+#   pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+#   pip install -r requirements-llm.txt
+
+transformers>=4.40.0
+trl>=0.8.6
+peft>=0.10.0
+datasets>=2.19.0
+accelerate>=0.29.0
+bitsandbytes>=0.43.0   # required for 4-bit quantization (QLoRA)

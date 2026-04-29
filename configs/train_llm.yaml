@@ -1,0 +1,50 @@
+task: llm
+
+model:
+  name: "unsloth/Meta-Llama-3.1-8B-Instruct"   # any HuggingFace or Unsloth model ID
+  max_seq_length: 2048
+  load_in_4bit: true        # QLoRA (4-bit base + bf16 adapters)
+  lora_r: 16
+  lora_alpha: 16
+  lora_dropout: 0.0         # 0 is recommended by Unsloth
+  lora_target_modules:      # standard set for decoder-only LLMs
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+data:
+  train_shards: "s3://my-bucket/llm/train/train-{0000..0063}.tar"
+  format: "alpaca"          # "alpaca" | "chat" | "text"
+  # Each shard contains {key}.json files.
+  #
+  # alpaca: {"instruction": "...", "input": "...", "output": "..."}
+  # chat:   {"messages": [{"role": "user", "content": "..."}, ...]}
+  # text:   {"text": "<full formatted prompt+response>"}
+
+training:
+  max_epochs: 3
+  per_device_batch_size: 2
+  gradient_accumulation_steps: 4   # effective batch = 2 * 4 = 8
+  warmup_steps: 10
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  lr_scheduler: "linear"           # "linear" | "cosine"
+  bf16: true                       # use fp16: true on V100
+
+checkpoint:
+  dirpath: "./checkpoints/llm"     # LoRA adapter saved here during training
+  save_steps: 100
+  gguf_quantization: "q4_k_m"     # exported after training
+  # Common quantization options:
+  #   q4_k_m  — best quality/size tradeoff (recommended)
+  #   q8_0    — larger, higher quality
+  #   f16     — full fp16, no quantization
+
+wandb:
+  project: "llm-finetune"
+  entity: null
+  tags: ["llm", "unsloth", "lora"]
