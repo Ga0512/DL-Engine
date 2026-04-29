@@ -1,6 +1,7 @@
 import sys
 import urllib.parse
 
+import numpy as np
 import torch
 import webdataset as wds
 import pytorch_lightning as pl
@@ -114,6 +115,95 @@ class WebDatasetDataModule(pl.LightningDataModule):
             .decode("pil")
             .to_tuple("jpg", "cls")
             .map_tuple(transform, lambda x: torch.tensor(int(x), dtype=torch.long))
+            .batched(self.cfg.data.batch_size, partial=not is_train)
+        )
+        return dataset
+
+    def train_dataloader(self) -> DataLoader:
+        dataset = self._make_dataset(self.cfg.data.train_shards, is_train=True)
+        steps = self.cfg.data.samples_per_epoch // self.cfg.data.batch_size
+        dataset = dataset.with_epoch(steps)
+
+        nw = self.cfg.data.num_workers
+        return DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=nw,
+            pin_memory=True,
+            prefetch_factor=4 if nw > 0 else None,
+            persistent_workers=nw > 0,
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        dataset = self._make_dataset(self.cfg.data.val_shards, is_train=False)
+
+        nw = max(self.cfg.data.num_workers // 2, 2) if self.cfg.data.num_workers > 0 else 0
+        return DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=nw,
+            pin_memory=True,
+            prefetch_factor=2 if nw > 0 else None,
+            persistent_workers=nw > 0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# SegmentationDataModule
+# ---------------------------------------------------------------------------
+
+def _make_image_transform(mean: list, std: list):
+    """Per-band normalization for multi-band numpy arrays (C, H, W)."""
+    mean_arr = np.array(mean, dtype=np.float32).reshape(-1, 1, 1)
+    std_arr  = np.array(std,  dtype=np.float32).reshape(-1, 1, 1)
+    def transform(x: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy((x.astype(np.float32) - mean_arr) / std_arr)
+    return transform
+
+
+def _mask_transform(x) -> torch.Tensor:
+    """Convert a PIL mask image to a long tensor of class indices."""
+    return torch.from_numpy(np.array(x, dtype=np.int64))
+
+
+class SegmentationDataModule(pl.LightningDataModule):
+    """
+    DataModule for semantic segmentation.
+
+    Shard format expected inside each .tar:
+        {key}.npy  — numpy array (C, H, W), multi-band satellite image
+        {key}.png  — segmentation mask as grayscale PNG (pixel = class index)
+
+    To create shards from GeoTIFF crops:
+        np.save(f"{key}.npy", crop_array)   # shape (C, H, W)
+        mask_pil.save(f"{key}.png")
+
+    Band statistics (mean/std per band) must be precomputed from your dataset
+    and set in the config under data.band_mean and data.band_std.
+    """
+
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+        self.cfg = cfg
+
+    def _make_dataset(self, shard_pattern: str, is_train: bool) -> wds.WebDataset:
+        urls = _expand_to_pipe_urls(shard_pattern)
+        img_tf = _make_image_transform(
+            list(self.cfg.data.band_mean),
+            list(self.cfg.data.band_std),
+        )
+
+        dataset = (
+            wds.WebDataset(
+                urls,
+                resampled=is_train,
+                shardshuffle=500 if is_train else False,
+                nodesplitter=wds.split_by_node,
+            )
+            .shuffle(1000 if is_train else 0)
+            .decode("numpy", "pil")
+            .to_tuple("npy", "png")
+            .map_tuple(img_tf, _mask_transform)
             .batched(self.cfg.data.batch_size, partial=not is_train)
         )
         return dataset

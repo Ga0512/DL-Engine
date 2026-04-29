@@ -6,8 +6,9 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 
 from src.models.model import build_model
-from src.loaders.webdataset_loader import WebDatasetDataModule
+from src.loaders.webdataset_loader import WebDatasetDataModule, SegmentationDataModule
 from src.systems.lightning_module import ClassificationSystem
+from src.systems.segmentation_module import SegmentationSystem
 from src.callbacks.checkpoint import build_checkpoint_callback
 
 
@@ -17,8 +18,14 @@ def train(config_path: str = "configs/train.yaml") -> None:
     pl.seed_everything(42, workers=True)
 
     model = build_model(cfg)
-    system = ClassificationSystem(model, cfg)
-    datamodule = WebDatasetDataModule(cfg)
+
+    task = getattr(cfg, "task", "classification")
+    if task == "segmentation":
+        system = SegmentationSystem(model, cfg)
+        datamodule = SegmentationDataModule(cfg)
+    else:
+        system = ClassificationSystem(model, cfg)
+        datamodule = WebDatasetDataModule(cfg)
 
     logger = WandbLogger(
         project=cfg.wandb.project,
