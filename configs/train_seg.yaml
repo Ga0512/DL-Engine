@@ -1,0 +1,51 @@
+task: segmentation
+
+model:
+  name: attention_resunet   # built-in; or any smp model: "Unet", "FPN", "DeepLabV3Plus"...
+  encoder: resnet34         # backbone for attention_resunet: "resnet34" or "resnet50"
+  pretrained: false         # no ImageNet weights when using 11-band input from scratch
+  num_classes: 19
+  in_channels: 11           # number of spectral bands
+
+data:
+  train_shards: "s3://my-bucket/sat/train/train-{0000..0127}.tar"
+  val_shards:   "s3://my-bucket/sat/val/val-{0000..0015}.tar"
+  batch_size: 8
+  num_workers: 4
+  samples_per_epoch: 50_000
+
+  # Per-band statistics — compute from your dataset before training:
+  #   mean[c] = dataset_mean_for_band_c
+  #   std[c]  = dataset_std_for_band_c
+  # Placeholder values below — replace with real stats.
+  band_mean: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  band_std:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+training:
+  max_epochs: 60
+  precision: "16-mixed"        # "bf16-mixed" on A100/H100
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 2
+  focal_weight: 1.0
+  dice_weight: 1.0
+  focal_gamma: 1.0
+  ignore_index: 0              # background class — set to -1 to disable
+
+optimizer:
+  name: adamw
+  lr: 5.0e-5
+  weight_decay: 1.0e-4
+
+scheduler:
+  name: cosine
+
+checkpoint:
+  dirpath: "./checkpoints/seg"
+  monitor: "val/miou"
+  mode: "max"
+  save_top_k: 3
+
+wandb:
+  project: "sat-segmentation"
+  entity: null
+  tags: ["segmentation", "11band"]
